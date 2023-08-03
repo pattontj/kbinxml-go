@@ -1,9 +1,15 @@
 package main
 
-import "fmt"
-import "github.com/beevik/etree"
+import (
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"os"
 
-import "os"
+	"bytes"
+
+	"github.com/beevik/etree"
+)
 
 const (
 	UTF8 = "UTF-8"
@@ -56,12 +62,13 @@ func (KBinXML) isBinaryXML(input []byte) bool {
 		return false
 	}
 
-	// TODO: also check if input[0] against sig compressed/uncompressed
-	if input[0] != SIGNATURE {
-		return false
+	if input[0] == SIGNATURE &&
+		(input[1] == SIG_COMPRESED ||
+			input[1] == SIG_UNCOMPRESSED) {
+		return true
 	}
 
-	return true
+	return false
 }
 
 // TODO: Learn more about the purpose of this function
@@ -113,8 +120,68 @@ func (KBinXML) toBinary() int {
 	return 0
 }
 
-func (KBinXML) fromBinary() int {
-	return 0
+func (KBinXML) fromBinary(input []byte) (int, error) {
+
+	if input[0] != SIGNATURE {
+		return 0, errors.New("File Signature is not correct")
+	}
+
+	// compression := input[1] == SIG_COMPRESED
+
+	encodeKey := input[2]
+
+	if input[3] != 0xFF^encodeKey {
+		return 0, errors.New("Encoding key issue")
+	}
+
+	// encodeFormat := encodingStrings[encodeKey]
+
+	var hlen uint32
+	// Copy the header length int into headerLen from the input
+	// and convert it to an int
+	headerLen := make([]byte, 4)
+	copy(headerLen, input[4:8])
+
+	// NOTE: This can probably be simplified to just pass input[4:8]
+	// since bytes module readers are supposedly read-only
+	// https://pkg.go.dev/bytes#Reader
+
+	buf := bytes.NewReader(headerLen)
+	herr := binary.Read(buf, binary.BigEndian, &hlen)
+
+	if herr != nil {
+		fmt.Println("binary.Read failed: ", herr)
+	}
+
+	fmt.Println(hlen)
+
+	// copy the schema definition into a buffer
+
+	// schemaHeader := make([]byte, hlen+8)
+	// copy(schemaHeader, input[8:])
+
+	// Fetch the length of the data section
+	var dlen uint32
+
+	dataLen := make([]byte, 4)
+	copy(dataLen, input[hlen+8:hlen+12])
+
+	dataBuf := bytes.NewReader(dataLen)
+	derr := binary.Read(dataBuf, binary.BigEndian, &dlen)
+
+	if derr != nil {
+		fmt.Println("Error reading data buffer length: ", derr)
+	}
+
+	// debug print
+	fmt.Println(dlen)
+
+	// finished := false
+
+	// for !finished {
+	// }
+
+	return 0, nil
 }
 
 func main() {
@@ -127,8 +194,10 @@ func main() {
 		fmt.Println(err)
 	}
 
-	fmt.Println(binFile[0])
+	test := new(KBinXML)
 
+	fmt.Println(binFile[0])
+	test.fromBinary(binFile)
 }
 
 const (
@@ -213,4 +282,13 @@ var binTypeMap = map[int]BinType{
 	0x36: {[]string{"3b"}, BUCKET_INT, 3},
 	0x37: {[]string{"4b"}, BUCKET_INT, 4},
 	0x38: {[]string{"vb"}, BUCKET_INT, 16},
+}
+
+var encodingStrings = map[int]string{
+	0x00: "none",
+	0x20: "ASCII",
+	0x40: "ISO-8859-1",
+	0x60: "EUC-JP",
+	0x80: "SHIFT-JS",
+	0xA0: "UTF-8",
 }
